@@ -2,7 +2,7 @@ const express = require('express');
 const https = require('https');
 
 const app = express();
-app.use(express.json({ limit: '10mb' })); // Better for larger payloads
+app.use(express.json({ limit: '500mb' })); // Better for larger payloads
 
 const ENCRYPT_KEY = "Syntax_AJ";
 const WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL || "";
@@ -100,7 +100,7 @@ app.post('/post', (req, res) => {
     };
 
     recentPosts.unshift(newEntry);
-    if (recentPosts.length > 30) recentPosts.pop();
+    if (recentPosts.length > 1000) recentPosts.pop();
 
     console.log(`✅ Successfully received & decrypted: ${brainrot} | JobId: ${jobId}`);
 
