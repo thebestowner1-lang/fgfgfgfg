@@ -36,7 +36,7 @@ function decryptJobId(hex) {
 let recentPosts = [];
 
 // FIX: Clear posts older than 10 seconds every second
-const POST_TTL_MS = 10000; // 10 seconds
+const POST_TTL_MS = 60000; // 60 seconds
 
 setInterval(() => {
     const now = Date.now();
