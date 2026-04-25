@@ -79,6 +79,7 @@ function sendWebhook(entry) {
 
 // ====================== MAIN ENDPOINT /post ======================
 app.post('/post', (req, res) => {
+    try {
     console.log("📥 Received raw body:", JSON.stringify(req.body, null, 2));
 
     const {
@@ -86,6 +87,7 @@ app.post('/post', (req, res) => {
         tier,
         income,
         encryptedJobId,
+        jobId: rawJobId,
         placeId,
         time,
         allFound
@@ -96,12 +98,14 @@ app.post('/post', (req, res) => {
         return res.status(400).json({ error: "Missing brainrot" });
     }
 
-    if (!encryptedJobId) {
-        console.log("❌ Missing encryptedJobId");
-        return res.status(400).json({ error: "Missing encryptedJobId" });
+    // Accept either an encrypted jobId OR a plain jobId — whichever the client sends
+    if (!encryptedJobId && !rawJobId) {
+        console.log("❌ Missing jobId (need encryptedJobId or jobId)");
+        return res.status(400).json({ error: "Missing jobId" });
     }
 
-    const jobId = decryptJobId(encryptedJobId);
+    // Decrypt if encrypted was provided, otherwise use plain jobId directly
+    const jobId = encryptedJobId ? decryptJobId(encryptedJobId) : rawJobId;
 
     const newEntry = {
         brainrot: brainrot,
@@ -129,6 +133,10 @@ app.post('/post', (req, res) => {
         brainrot: brainrot,
         totalPosts: recentPosts.length
     });
+    } catch (err) {
+        console.error("❌ /post handler crashed:", err);
+        res.status(500).json({ error: "Internal server error", details: err.message });
+    }
 });
 
 // ====================== VIEW POSTS ======================
