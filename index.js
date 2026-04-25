@@ -2,7 +2,7 @@ const express = require('express');
 const https = require('https');
 
 const app = express();
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '10mb' })); // Better for larger payloads
 
 const ENCRYPT_KEY = "Syntax_AJ";
 const WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL || "";
@@ -35,22 +35,6 @@ function decryptJobId(hex) {
 // ====================== STORAGE ======================
 let recentPosts = [];
 
-// FIX: Clear posts older than 10 seconds every second
-const POST_TTL_MS = 60000; // 60 seconds
-
-setInterval(() => {
-    const now = Date.now();
-    const before = recentPosts.length;
-    recentPosts = recentPosts.filter(post => {
-        const age = now - new Date(post.receivedAt).getTime();
-        return age < POST_TTL_MS;
-    });
-    const removed = before - recentPosts.length;
-    if (removed > 0) {
-        console.log(`🗑 Cleared ${removed} expired post(s). Remaining: ${recentPosts.length}`);
-    }
-}, 1000);
-
 // ====================== DISCORD WEBHOOK ======================
 function sendWebhook(entry) {
     if (!WEBHOOK_URL) return;
@@ -79,18 +63,16 @@ function sendWebhook(entry) {
 
 // ====================== MAIN ENDPOINT /post ======================
 app.post('/post', (req, res) => {
-    try {
     console.log("📥 Received raw body:", JSON.stringify(req.body, null, 2));
 
-    const {
-        brainrot,
-        tier,
-        income,
-        encryptedJobId,
-        jobId: rawJobId,
-        placeId,
-        time,
-        allFound
+    const { 
+        brainrot, 
+        tier, 
+        income, 
+        encryptedJobId, 
+        placeId, 
+        time, 
+        allFound 
     } = req.body;
 
     if (!brainrot) {
@@ -98,14 +80,12 @@ app.post('/post', (req, res) => {
         return res.status(400).json({ error: "Missing brainrot" });
     }
 
-    // Accept either an encrypted jobId OR a plain jobId — whichever the client sends
-    if (!encryptedJobId && !rawJobId) {
-        console.log("❌ Missing jobId (need encryptedJobId or jobId)");
-        return res.status(400).json({ error: "Missing jobId" });
+    if (!encryptedJobId) {
+        console.log("❌ Missing encryptedJobId");
+        return res.status(400).json({ error: "Missing encryptedJobId" });
     }
 
-    // Decrypt if encrypted was provided, otherwise use plain jobId directly
-    const jobId = encryptedJobId ? decryptJobId(encryptedJobId) : rawJobId;
+    const jobId = decryptJobId(encryptedJobId);
 
     const newEntry = {
         brainrot: brainrot,
@@ -113,10 +93,10 @@ app.post('/post', (req, res) => {
         income: income || "0",
         jobId: jobId,
         encryptedJobId: encryptedJobId,
-        placeId: placeId || "unknown",
+        placeId: placeId || game.PlaceId || "unknown",
         time: time ? new Date(time * 1000).toISOString() : new Date().toISOString(),
         allFound: allFound || [],
-        receivedAt: new Date().toISOString()  // used for TTL expiry
+        receivedAt: new Date().toISOString()
     };
 
     recentPosts.unshift(newEntry);
@@ -126,6 +106,7 @@ app.post('/post', (req, res) => {
 
     sendWebhook(newEntry);
 
+    // Return plain JSON
     res.status(200).json({
         success: true,
         message: "Data received and decrypted",
@@ -133,40 +114,29 @@ app.post('/post', (req, res) => {
         brainrot: brainrot,
         totalPosts: recentPosts.length
     });
-    } catch (err) {
-        console.error("❌ /post handler crashed:", err);
-        res.status(500).json({ error: "Internal server error", details: err.message });
-    }
 });
 
-// ====================== VIEW POSTS ======================
+// ====================== VIEW POSTS (plain JSON) ======================
 app.get('/posts', (req, res) => {
-    // Also filter on read so clients always get fresh data
-    const now = Date.now();
-    const livePosts = recentPosts.filter(post => {
-        return now - new Date(post.receivedAt).getTime() < POST_TTL_MS;
-    });
-
     res.status(200).json({
-        total: livePosts.length,
-        posts: livePosts
+        total: recentPosts.length,
+        posts: recentPosts
     });
 });
 
 // Health
 app.get('/health', (req, res) => {
-    res.json({
-        status: "ok",
-        message: "API is running",
-        totalPosts: recentPosts.length,
-        postTTL: `${POST_TTL_MS / 1000}s`
+    res.json({ 
+        status: "ok", 
+        message: "API is running", 
+        totalPosts: recentPosts.length 
     });
 });
 
 // Root
 app.get('/', (req, res) => {
-    res.json({
-        message: "Syntax API is running. Use POST /post and GET /posts"
+    res.json({ 
+        message: "Syntax API is running. Use POST /post and GET /posts" 
     });
 });
 
@@ -175,5 +145,4 @@ app.listen(PORT, () => {
     console.log(`🚀 Syntax API running on port ${PORT}`);
     console.log(`📡 Send data to: /post`);
     console.log(`📋 View logs at: /posts`);
-    console.log(`⏱ Posts expire after: ${POST_TTL_MS / 1000}s`);
 });
