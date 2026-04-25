@@ -1,13 +1,13 @@
 const express = require('express');
-const axios = require('axios');   // For sending webhook
+const https = require('https');   // Built-in, no install needed
 
 const app = express();
 app.use(express.json());
 
 const ENCRYPT_KEY = "Syntax_AJ";
-const WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL || ""; // Set this in Railway Variables
+const WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL || "";
 
-// ====================== DECRYPTION (Exact match to your Roblox) ======================
+// ====================== DECRYPTION (exact match to your Roblox) ======================
 function fromHex(hex) {
     let str = '';
     for (let i = 0; i < hex.length; i += 2) {
@@ -35,47 +35,54 @@ function decryptJobId(hex) {
 // ====================== STORAGE ======================
 let recentPosts = [];
 
-// ====================== SEND DISCORD WEBHOOK ======================
-async function sendWebhook(entry) {
+// ====================== SEND DISCORD WEBHOOK (using built-in https) ======================
+function sendWebhook(entry) {
     if (!WEBHOOK_URL) return;
 
-    const embed = {
-        title: "🌹 New Brainrot Server Found",
-        color: 0xff69b4,
-        fields: [
-            { name: "Brainrot", value: entry.brainrot, inline: true },
-            { name: "Tier", value: entry.tier, inline: true },
-            { name: "Income", value: entry.income, inline: true },
-            { name: "Job ID", value: `\`${entry.jobId}\``, inline: false },
-            { name: "Place ID", value: entry.placeId.toString(), inline: true },
-            { name: "Time", value: entry.time.toLocaleString(), inline: true }
-        ],
-        timestamp: new Date().toISOString(),
-        footer: { text: "Syntax Railway Logger" }
+    const payload = JSON.stringify({
+        username: "Syntax Logger",
+        embeds: [{
+            title: "🌹 New Brainrot Server Found",
+            color: 0xff69b4,
+            fields: [
+                { name: "Brainrot", value: entry.brainrot, inline: true },
+                { name: "Tier", value: entry.tier, inline: true },
+                { name: "Income", value: entry.income, inline: true },
+                { name: "Job ID", value: `\`${entry.jobId}\``, inline: false },
+                { name: "Place ID", value: entry.placeId.toString(), inline: true },
+                { name: "Detected Time", value: entry.time.toLocaleString(), inline: true }
+            ],
+            timestamp: new Date().toISOString(),
+            footer: { text: "Syntax Railway Logger" }
+        }]
+    });
+
+    const url = new URL(WEBHOOK_URL);
+    const options = {
+        hostname: url.hostname,
+        path: url.pathname + url.search,
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Content-Length': Buffer.byteLength(payload)
+        }
     };
 
-    try {
-        await axios.post(WEBHOOK_URL, {
-            username: "Syntax Logger",
-            embeds: [embed]
-        });
-        console.log(`✅ Webhook sent for ${entry.brainrot}`);
-    } catch (err) {
-        console.error("❌ Webhook failed:", err.message);
-    }
+    const req = https.request(options, (res) => {
+        console.log(`Webhook sent | Status: ${res.statusCode}`);
+    });
+
+    req.on('error', (err) => {
+        console.error("Webhook error:", err.message);
+    });
+
+    req.write(payload);
+    req.end();
 }
 
 // ====================== MAIN ENDPOINT ======================
-app.post('/post', async (req, res) => {
-    const { 
-        brainrot, 
-        tier, 
-        income, 
-        encryptedJobId, 
-        placeId, 
-        time, 
-        allFound 
-    } = req.body;
+app.post('/post', (req, res) => {
+    const { brainrot, tier, income, encryptedJobId, placeId, time, allFound } = req.body;
 
     if (!brainrot || !encryptedJobId) {
         return res.status(400).json({ error: "Missing brainrot or encryptedJobId" });
@@ -88,27 +95,24 @@ app.post('/post', async (req, res) => {
         tier: tier || "unknown",
         income: income || "0",
         jobId: jobId,
-        encryptedJobId: encryptedJobId,
         placeId: placeId || "unknown",
         time: time ? new Date(time * 1000) : new Date(),
         allFound: allFound || [],
         receivedAt: new Date()
     };
 
-    // Add to recent posts (newest first)
-    recentPosts.unshift(newEntry);
+    recentPosts.unshift(newEntry);   // Newest first
     if (recentPosts.length > 30) recentPosts.pop();
 
-    console.log(`📥 Received: ${brainrot} | Income: ${income} | JobId: ${jobId}`);
+    console.log(`📥 New post → ${brainrot} | Income: ${income} | JobId: ${jobId}`);
 
-    // Send Discord Webhook
+    // Send Discord notification
     sendWebhook(newEntry);
 
-    return res.status(200).json({
+    res.status(200).json({
         success: true,
-        message: "Data received and decrypted",
-        jobId: jobId,
-        brainrot: brainrot
+        message: "Received and decrypted successfully",
+        jobId: jobId
     });
 });
 
@@ -129,18 +133,12 @@ app.get('/', (req, res) => {
     </head>
     <body>
         <h1>🌹 Syntax Live Posts</h1>
-        <p>Total: ${recentPosts.length} posts</p>
+        <p>Total recent posts: ${recentPosts.length}</p>
         <table>
-            <tr>
-                <th>Brainrot</th>
-                <th>Tier</th>
-                <th>Income</th>
-                <th>Job ID</th>
-                <th>Time</th>
-            </tr>`;
+            <tr><th>Brainrot</th><th>Tier</th><th>Income</th><th>Job ID</th><th>Time</th></tr>`;
 
     if (recentPosts.length === 0) {
-        html += `<tr><td colspan="5">No posts yet...</td></tr>`;
+        html += `<tr><td colspan="5" style="text-align:center;">No posts yet...</td></tr>`;
     } else {
         recentPosts.forEach(entry => {
             html += `
@@ -167,10 +165,10 @@ app.get('/health', (req, res) => {
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`🚀 Syntax Small API running on port ${PORT}`);
-    console.log(`📡 Roblox → POST to /post`);
+    console.log(`📡 Roblox should POST to: /post`);
     if (WEBHOOK_URL) {
-        console.log(`🪝 Discord webhook notifications enabled`);
+        console.log(`🪝 Discord webhook enabled`);
     } else {
-        console.log(`⚠️  No DISCORD_WEBHOOK_URL set in environment variables`);
+        console.log(`⚠️  Set DISCORD_WEBHOOK_URL in Railway variables for notifications`);
     }
 });
