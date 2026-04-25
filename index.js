@@ -1,10 +1,13 @@
 const express = require('express');
+const axios = require('axios');   // For sending webhook
+
 const app = express();
 app.use(express.json());
 
 const ENCRYPT_KEY = "Syntax_AJ";
+const WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL || ""; // Set this in Railway Variables
 
-// ====================== DECRYPTION FUNCTIONS ======================
+// ====================== DECRYPTION (Exact match to your Roblox) ======================
 function fromHex(hex) {
     let str = '';
     for (let i = 0; i < hex.length; i += 2) {
@@ -29,129 +32,126 @@ function decryptJobId(hex) {
     }
 }
 
-// ====================== DATA STORES ======================
-let servers = [];           // public list for /notify
-const logs = new Map();     // in-memory log store
+// ====================== STORAGE ======================
+let recentPosts = [];
 
-// ====================== NOTIFY ENDPOINT ======================
-app.post('/notify', (req, res) => {
-    const { brainrot, income, encryptedJobId, placeId, time } = req.body;
-    if (!brainrot || !encryptedJobId) return res.sendStatus(400);
+// ====================== SEND DISCORD WEBHOOK ======================
+async function sendWebhook(entry) {
+    if (!WEBHOOK_URL) return;
+
+    const embed = {
+        title: "🌹 New Brainrot Server Found",
+        color: 0xff69b4,
+        fields: [
+            { name: "Brainrot", value: entry.brainrot, inline: true },
+            { name: "Tier", value: entry.tier, inline: true },
+            { name: "Income", value: entry.income, inline: true },
+            { name: "Job ID", value: `\`${entry.jobId}\``, inline: false },
+            { name: "Place ID", value: entry.placeId.toString(), inline: true },
+            { name: "Time", value: entry.time.toLocaleString(), inline: true }
+        ],
+        timestamp: new Date().toISOString(),
+        footer: { text: "Syntax Railway Logger" }
+    };
+
+    try {
+        await axios.post(WEBHOOK_URL, {
+            username: "Syntax Logger",
+            embeds: [embed]
+        });
+        console.log(`✅ Webhook sent for ${entry.brainrot}`);
+    } catch (err) {
+        console.error("❌ Webhook failed:", err.message);
+    }
+}
+
+// ====================== MAIN ENDPOINT ======================
+app.post('/post', async (req, res) => {
+    const { 
+        brainrot, 
+        tier, 
+        income, 
+        encryptedJobId, 
+        placeId, 
+        time, 
+        allFound 
+    } = req.body;
+
+    if (!brainrot || !encryptedJobId) {
+        return res.status(400).json({ error: "Missing brainrot or encryptedJobId" });
+    }
 
     const jobId = decryptJobId(encryptedJobId);
 
-    servers.unshift({
+    const newEntry = {
         brainrot: brainrot,
-        income: income,
+        tier: tier || "unknown",
+        income: income || "0",
         jobId: jobId,
-        placeId: placeId,
-        time: new Date(time * 1000)
-    });
+        encryptedJobId: encryptedJobId,
+        placeId: placeId || "unknown",
+        time: time ? new Date(time * 1000) : new Date(),
+        allFound: allFound || [],
+        receivedAt: new Date()
+    };
 
-    if (servers.length > 50) servers.pop(); // keep only last 50
+    // Add to recent posts (newest first)
+    recentPosts.unshift(newEntry);
+    if (recentPosts.length > 30) recentPosts.pop();
 
-    console.log(`📥 New server added: ${brainrot} | ${income}`);
-    res.sendStatus(200);
-});
+    console.log(`📥 Received: ${brainrot} | Income: ${income} | JobId: ${jobId}`);
 
-// ====================== LOG ENDPOINTS ======================
-
-// POST /log — receive encrypted jobId from Roblox
-app.post("/log", (req, res) => {
-    const { userId } = req.body;
-    if (!userId) {
-        return res.status(400).json({ error: "Missing userId in request body." });
-    }
-
-    const logId = `log_${Date.now()}`;
-    const timestamp = new Date().toISOString();
-
-    // Auto-delete after 60 seconds
-    const timer = setTimeout(() => {
-        logs.delete(logId);
-        console.log(`[AUTO-DELETE] Log ${logId} removed.`);
-    }, 60000);
-
-    logs.set(logId, { 
-        userId: String(userId), 
-        timestamp, 
-        timer 
-    });
-
-    console.log(`[LOG] Encrypted jobId received | logId: ${logId}`);
+    // Send Discord Webhook
+    sendWebhook(newEntry);
 
     return res.status(200).json({
-        message: "Logged successfully. Will be deleted in 1 minute.",
-        logId: logId,
-        timestamp: timestamp
+        success: true,
+        message: "Data received and decrypted",
+        jobId: jobId,
+        brainrot: brainrot
     });
 });
 
-// GET /logs — decrypted logs (this was broken before)
-app.get("/logs", (req, res) => {
-    const entries = [];
-
-    for (const [id, data] of logs.entries()) {
-        const decryptedJobId = decryptJobId(data.userId);
-
-        entries.push({
-            logId: id,
-            jobId: decryptedJobId,           // ← Decrypted here
-            encryptedJobId: data.userId,
-            timestamp: data.timestamp
-        });
-    }
-
-    return res.status(200).json({
-        count: entries.length,
-        logs: entries
-    });
-});
-
-// DELETE /log/:logId
-app.delete("/log/:logId", (req, res) => {
-    const { logId } = req.params;
-    const entry = logs.get(logId);
-
-    if (!entry) {
-        return res.status(404).json({ error: "Log not found." });
-    }
-
-    clearTimeout(entry.timer);
-    logs.delete(logId);
-    return res.status(200).json({ message: `Log ${logId} deleted.` });
-});
-
-// ====================== PUBLIC HTML PAGE ======================
+// ====================== VIEW PAGE ======================
 app.get('/', (req, res) => {
     let html = `
     <html>
     <head>
-        <title>Syntax Live Servers</title>
+        <title>Syntax Posts</title>
         <style>
             body { font-family: Arial; background: #0f0f0f; color: #fff; padding: 20px; }
-            table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-            th, td { border: 1px solid #333; padding: 12px; text-align: left; }
+            h1 { color: #ff69b4; }
+            table { width: 100%; border-collapse: collapse; margin: 20px 0; }
+            th, td { border: 1px solid #444; padding: 10px; text-align: left; }
             th { background: #1f1f1f; }
-            .copy { cursor: pointer; color: #00ff00; }
+            .copy { cursor: pointer; color: #00ff88; }
         </style>
     </head>
     <body>
-        <h1>🌹 Syntax Live Brainrot Servers</h1>
+        <h1>🌹 Syntax Live Posts</h1>
+        <p>Total: ${recentPosts.length} posts</p>
         <table>
-            <tr><th>Brainrot</th><th>Income</th><th>JobId</th><th>Time</th></tr>`;
+            <tr>
+                <th>Brainrot</th>
+                <th>Tier</th>
+                <th>Income</th>
+                <th>Job ID</th>
+                <th>Time</th>
+            </tr>`;
 
-    servers.forEach(s => {
-        html += `<tr>
-            <td>${s.brainrot}</td>
-            <td>${s.income}</td>
-            <td><span class="copy" onclick="navigator.clipboard.writeText('${s.jobId}')">${s.jobId}</span></td>
-            <td>${s.time.toLocaleTimeString()}</td>
-        </tr>`;
-    });
-
-    if (servers.length === 0) {
-        html += `<tr><td colspan="4">No servers yet...</td></tr>`;
+    if (recentPosts.length === 0) {
+        html += `<tr><td colspan="5">No posts yet...</td></tr>`;
+    } else {
+        recentPosts.forEach(entry => {
+            html += `
+            <tr>
+                <td><strong>${entry.brainrot}</strong></td>
+                <td>${entry.tier}</td>
+                <td>${entry.income}</td>
+                <td><span class="copy" onclick="navigator.clipboard.writeText('${entry.jobId}')">${entry.jobId}</span></td>
+                <td>${entry.time.toLocaleTimeString()}</td>
+            </tr>`;
+        });
     }
 
     html += `</table></body></html>`;
@@ -159,20 +159,18 @@ app.get('/', (req, res) => {
 });
 
 // Health check
-app.get("/health", (req, res) => {
-    res.json({ 
-        status: "ok", 
-        message: "Syntax API is running",
-        logsCount: logs.size,
-        serversCount: servers.length 
-    });
+app.get('/health', (req, res) => {
+    res.json({ status: "ok", posts: recentPosts.length });
 });
 
-// ====================== START SERVER ======================
+// Start server
 const PORT = process.env.PORT || 3000;
-
 app.listen(PORT, () => {
-    console.log(`✅ Syntax API running on port ${PORT}`);
-    console.log(`📡 POST logs to /log`);
-    console.log(`🔍 View decrypted logs at /logs`);
+    console.log(`🚀 Syntax Small API running on port ${PORT}`);
+    console.log(`📡 Roblox → POST to /post`);
+    if (WEBHOOK_URL) {
+        console.log(`🪝 Discord webhook notifications enabled`);
+    } else {
+        console.log(`⚠️  No DISCORD_WEBHOOK_URL set in environment variables`);
+    }
 });
