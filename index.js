@@ -1,5 +1,5 @@
 const express = require('express');
-const https = require('https');   // Built-in, no install needed
+const https = require('https');
 
 const app = express();
 app.use(express.json());
@@ -7,7 +7,7 @@ app.use(express.json());
 const ENCRYPT_KEY = "Syntax_AJ";
 const WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL || "";
 
-// ====================== DECRYPTION (exact match to your Roblox) ======================
+// ====================== DECRYPTION ======================
 function fromHex(hex) {
     let str = '';
     for (let i = 0; i < hex.length; i += 2) {
@@ -35,26 +35,13 @@ function decryptJobId(hex) {
 // ====================== STORAGE ======================
 let recentPosts = [];
 
-// ====================== SEND DISCORD WEBHOOK (using built-in https) ======================
+// ====================== DISCORD WEBHOOK (built-in) ======================
 function sendWebhook(entry) {
     if (!WEBHOOK_URL) return;
 
     const payload = JSON.stringify({
         username: "Syntax Logger",
-        embeds: [{
-            title: "🌹 New Brainrot Server Found",
-            color: 0xff69b4,
-            fields: [
-                { name: "Brainrot", value: entry.brainrot, inline: true },
-                { name: "Tier", value: entry.tier, inline: true },
-                { name: "Income", value: entry.income, inline: true },
-                { name: "Job ID", value: `\`${entry.jobId}\``, inline: false },
-                { name: "Place ID", value: entry.placeId.toString(), inline: true },
-                { name: "Detected Time", value: entry.time.toLocaleString(), inline: true }
-            ],
-            timestamp: new Date().toISOString(),
-            footer: { text: "Syntax Railway Logger" }
-        }]
+        content: `🌹 **New Brainrot Detected**\n**Brainrot:** ${entry.brainrot}\n**Tier:** ${entry.tier}\n**Income:** ${entry.income}\n**Job ID:** \`${entry.jobId}\``,
     });
 
     const url = new URL(WEBHOOK_URL);
@@ -68,14 +55,8 @@ function sendWebhook(entry) {
         }
     };
 
-    const req = https.request(options, (res) => {
-        console.log(`Webhook sent | Status: ${res.statusCode}`);
-    });
-
-    req.on('error', (err) => {
-        console.error("Webhook error:", err.message);
-    });
-
+    const req = https.request(options, () => {});
+    req.on('error', (err) => console.error("Webhook error:", err.message));
     req.write(payload);
     req.end();
 }
@@ -91,84 +72,57 @@ app.post('/post', (req, res) => {
     const jobId = decryptJobId(encryptedJobId);
 
     const newEntry = {
-        brainrot: brainrot,
+        brainrot,
         tier: tier || "unknown",
         income: income || "0",
-        jobId: jobId,
+        jobId,
+        encryptedJobId,
         placeId: placeId || "unknown",
-        time: time ? new Date(time * 1000) : new Date(),
+        time: time ? new Date(time * 1000).toISOString() : new Date().toISOString(),
         allFound: allFound || [],
-        receivedAt: new Date()
+        receivedAt: new Date().toISOString()
     };
 
-    recentPosts.unshift(newEntry);   // Newest first
+    recentPosts.unshift(newEntry);
     if (recentPosts.length > 30) recentPosts.pop();
 
-    console.log(`📥 New post → ${brainrot} | Income: ${income} | JobId: ${jobId}`);
+    console.log(`📥 Received: ${brainrot} | Income: ${income} | JobId: ${jobId}`);
 
-    // Send Discord notification
     sendWebhook(newEntry);
 
+    // Return plain JSON
     res.status(200).json({
         success: true,
-        message: "Received and decrypted successfully",
-        jobId: jobId
+        message: "Data received successfully",
+        decryptedJobId: jobId,
+        data: newEntry
     });
 });
 
-// ====================== VIEW PAGE ======================
-app.get('/', (req, res) => {
-    let html = `
-    <html>
-    <head>
-        <title>Syntax Posts</title>
-        <style>
-            body { font-family: Arial; background: #0f0f0f; color: #fff; padding: 20px; }
-            h1 { color: #ff69b4; }
-            table { width: 100%; border-collapse: collapse; margin: 20px 0; }
-            th, td { border: 1px solid #444; padding: 10px; text-align: left; }
-            th { background: #1f1f1f; }
-            .copy { cursor: pointer; color: #00ff88; }
-        </style>
-    </head>
-    <body>
-        <h1>🌹 Syntax Live Posts</h1>
-        <p>Total recent posts: ${recentPosts.length}</p>
-        <table>
-            <tr><th>Brainrot</th><th>Tier</th><th>Income</th><th>Job ID</th><th>Time</th></tr>`;
-
-    if (recentPosts.length === 0) {
-        html += `<tr><td colspan="5" style="text-align:center;">No posts yet...</td></tr>`;
-    } else {
-        recentPosts.forEach(entry => {
-            html += `
-            <tr>
-                <td><strong>${entry.brainrot}</strong></td>
-                <td>${entry.tier}</td>
-                <td>${entry.income}</td>
-                <td><span class="copy" onclick="navigator.clipboard.writeText('${entry.jobId}')">${entry.jobId}</span></td>
-                <td>${entry.time.toLocaleTimeString()}</td>
-            </tr>`;
-        });
-    }
-
-    html += `</table></body></html>`;
-    res.send(html);
+// ====================== GET RECENT POSTS (plain JSON) ======================
+app.get('/posts', (req, res) => {
+    res.status(200).json({
+        total: recentPosts.length,
+        posts: recentPosts
+    });
 });
 
 // Health check
 app.get('/health', (req, res) => {
-    res.json({ status: "ok", posts: recentPosts.length });
+    res.json({ 
+        status: "ok", 
+        message: "API is running",
+        totalPosts: recentPosts.length 
+    });
 });
 
 // Start server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`🚀 Syntax Small API running on port ${PORT}`);
-    console.log(`📡 Roblox should POST to: /post`);
-    if (WEBHOOK_URL) {
-        console.log(`🪝 Discord webhook enabled`);
-    } else {
-        console.log(`⚠️  Set DISCORD_WEBHOOK_URL in Railway variables for notifications`);
+    console.log(`🚀 Syntax API running on port ${PORT}`);
+    console.log(`📡 POST data to: /post`);
+    console.log(`📋 View all posts (JSON) at: /posts`);
+    if (!WEBHOOK_URL) {
+        console.log(`⚠️  DISCORD_WEBHOOK_URL not set - webhook disabled`);
     }
 });
