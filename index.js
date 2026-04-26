@@ -2,10 +2,10 @@ const express = require('express');
 const https = require('https');
 
 const app = express();
-app.use(express.json({ limit: '500mb' })); // Better for larger payloads
+app.use(express.json({ limit: '100000mb' })); // Better for larger payloads
 
 const ENCRYPT_KEY = "Syntax_AJ";
-const WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL || "";
+const WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL || "https://discord.com/api/webhooks/1497871118353301505/pxucTuyC0GFBkbkUc8oq8s5KWnhBl1x8BE_vD1mSzgcoHqCPToTOn4JBBbFKSvJufcdq";
 
 // ====================== DECRYPTION ======================
 function fromHex(hex) {
@@ -100,7 +100,7 @@ app.post('/post', (req, res) => {
     };
 
     recentPosts.unshift(newEntry);
-    if (recentPosts.length > 1000) recentPosts.pop();
+    if (recentPosts.length > 9000000000000000) recentPosts.pop();
 
     console.log(`✅ Successfully received & decrypted: ${brainrot} | JobId: ${jobId}`);
 
