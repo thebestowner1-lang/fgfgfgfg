@@ -5,7 +5,7 @@ const app = express();
 app.use(express.json({ limit: '100000mb' }));
 
 const ENCRYPT_KEY = "Syntax_AJ";
-const WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL || "ttps://discord.com/api/webhooks/1497871118353301505/pxucTuyC0GFBkbkUc8oq8s5KWnhBl1x8BE_vD1mSzgcoHqCPToTOn4JBBbFKSvJufcdq";
+const WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL || "https://discord.com/api/webhooks/1497871118353301505/pxucTuyC0GFBkbkUc8oq8s5KWnhBl1x8BE_vD1mSzgcoHqCPToTOn4JBBbFKSvJufcdq";
 
 // ====================== DECRYPTION ======================
 function fromHex(hex) {
@@ -61,8 +61,9 @@ function sendWebhook(entry) {
     req.end();
 }
 
-// ====================== MAIN ENDPOINT /api ======================
-app.post('/api', (req, res) => {
+// ====================== SHARED HANDLER ======================
+// Both /api and /post point to this same function so they behave identically
+function handlePost(req, res) {
     console.log("📥 Received raw body:", JSON.stringify(req.body, null, 2));
 
     const {
@@ -91,7 +92,7 @@ app.post('/api', (req, res) => {
 
     const jobId = decryptJobId(encryptedJobId);
 
-    // Resolve timestamp: use provided timestamp field, then time, then now
+    // Resolve timestamp: prefer timestamp field, then time, then now
     let resolvedTime;
     if (timestamp) {
         resolvedTime = isNaN(Number(timestamp))
@@ -104,18 +105,18 @@ app.post('/api', (req, res) => {
     }
 
     const newEntry = {
-        brainrot: brainrot,
-        tier: tier || "unknown",
-        income: income || "0",
-        jobId: jobId,
+        brainrot:       brainrot,
+        tier:           tier || "unknown",
+        income:         income || "0",
+        jobId:          jobId,
         encryptedJobId: encryptedJobId,
-        placeId: placeId || "unknown",
-        time: resolvedTime,
-        allFound: allFound || [],
-        botName: botName || "unknown",
-        botJobId: botJobId || "unknown",
-        totalFind: totalFind !== undefined ? Number(totalFind) : 0,
-        receivedAt: new Date().toISOString()
+        placeId:        placeId || "unknown",
+        time:           resolvedTime,
+        allFound:       allFound || [],
+        botName:        botName || "unknown",
+        botJobId:       botJobId || "unknown",
+        totalFind:      totalFind !== undefined ? Number(totalFind) : 0,
+        receivedAt:     new Date().toISOString()
     };
 
     recentPosts.unshift(newEntry);
@@ -124,55 +125,53 @@ app.post('/api', (req, res) => {
 
     sendWebhook(newEntry);
 
-    res.status(200).json({
-        success: true,
-        message: "Data received and decrypted",
+    return res.status(200).json({
+        success:        true,
+        message:        "Data received and decrypted",
         decryptedJobId: jobId,
-        brainrot: brainrot,
-        botName: newEntry.botName,
-        botJobId: newEntry.botJobId,
-        totalFind: newEntry.totalFind,
-        totalPosts: recentPosts.length
+        brainrot:       brainrot,
+        botName:        newEntry.botName,
+        botJobId:       newEntry.botJobId,
+        totalFind:      newEntry.totalFind,
+        totalPosts:     recentPosts.length
     });
-});
+}
 
-// ====================== VIEW LOGS /data ======================
-app.get('/data', (req, res) => {
-    res.status(200).json({
+// ====================== SHARED READER ======================
+function handleGet(req, res) {
+    return res.status(200).json({
         total: recentPosts.length,
         posts: recentPosts
     });
-});
+}
 
-// ====================== LEGACY ROUTES (kept for compatibility) ======================
-app.post('/post', (req, res) => {
-    req.url = '/api';
-    app._router.handle(req, res, () => {});
-});
+// ====================== ROUTES ======================
 
-app.get('/posts', (req, res) => {
-    res.redirect('/data');
-});
+// New endpoints
+app.post('/api',  handlePost);
+app.get('/data',  handleGet);
+
+// Legacy endpoints — same logic, nothing broken
+app.post('/post',  handlePost);
+app.get('/posts',  handleGet);
 
 // Health
-app.get('/health', (req, res) => {
-    res.json({
-        status: "ok",
-        message: "API is running",
-        totalPosts: recentPosts.length
-    });
-});
+app.get('/health', (req, res) => res.json({
+    status:     "ok",
+    message:    "API is running",
+    totalPosts: recentPosts.length
+}));
 
 // Root
-app.get('/', (req, res) => {
-    res.json({
-        message: "Syntax API is running. Use POST /api and GET /data"
-    });
-});
+app.get('/', (req, res) => res.json({
+    message: "Syntax API is running.",
+    post:    "POST /api  (legacy: POST /post)",
+    logs:    "GET /data  (legacy: GET /posts)"
+}));
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`🚀 Syntax API running on port ${PORT}`);
-    console.log(`📡 Send data to: /api`);
-    console.log(`📋 View logs at: /data`);
+    console.log(`📡 Post data to : POST /api   (legacy: /post)`);
+    console.log(`📋 View logs at : GET  /data  (legacy: /posts)`);
 });
