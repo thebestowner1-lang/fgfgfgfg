@@ -5,7 +5,7 @@ const app = express();
 app.use(express.json({ limit: '100000mb' }));
 
 const ENCRYPT_KEY = "Syntax_AJ";
-const WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL || "https://discord.com/api/webhooks/1497871118353301505/pxucTuyC0GFBkbkUc8oq8s5KWnhBl1x8BE_vD1mSzgcoHqCPToTOn4JBBbFKSvJufcdq";
+const WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL || "ttps://discord.com/api/webhooks/1497871118353301505/pxucTuyC0GFBkbkUc8oq8s5KWnhBl1x8BE_vD1mSzgcoHqCPToTOn4JBBbFKSvJufcdq";
 
 // ====================== DECRYPTION ======================
 function fromHex(hex) {
