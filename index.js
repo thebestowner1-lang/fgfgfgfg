@@ -2,7 +2,7 @@ const express = require('express');
 const https = require('https');
 
 const app = express();
-app.use(express.json({ limit: '100000mb' })); // Better for larger payloads
+app.use(express.json({ limit: '100000mb' }));
 
 const ENCRYPT_KEY = "Syntax_AJ";
 const WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL || "https://discord.com/api/webhooks/1497871118353301505/pxucTuyC0GFBkbkUc8oq8s5KWnhBl1x8BE_vD1mSzgcoHqCPToTOn4JBBbFKSvJufcdq";
@@ -41,7 +41,7 @@ function sendWebhook(entry) {
 
     const payload = JSON.stringify({
         username: "Syntax Logger",
-        content: `🌹 **New Post**\n**Brainrot:** ${entry.brainrot}\n**Tier:** ${entry.tier}\n**Income:** ${entry.income}\n**Job ID:** \`${entry.jobId}\``,
+        content: `🌹 **New Post**\n**Brainrot:** ${entry.brainrot}\n**Tier:** ${entry.tier}\n**Income:** ${entry.income}\n**Job ID:** \`${entry.jobId}\`\n**Bot Name:** ${entry.botName}\n**Bot Job ID:** \`${entry.botJobId}\`\n**Total Finds:** ${entry.totalFind}`,
     });
 
     const url = new URL(WEBHOOK_URL);
@@ -61,18 +61,22 @@ function sendWebhook(entry) {
     req.end();
 }
 
-// ====================== MAIN ENDPOINT /post ======================
-app.post('/post', (req, res) => {
+// ====================== MAIN ENDPOINT /api ======================
+app.post('/api', (req, res) => {
     console.log("📥 Received raw body:", JSON.stringify(req.body, null, 2));
 
-    const { 
-        brainrot, 
-        tier, 
-        income, 
-        encryptedJobId, 
-        placeId, 
-        time, 
-        allFound 
+    const {
+        brainrot,
+        tier,
+        income,
+        encryptedJobId,
+        placeId,
+        time,
+        allFound,
+        botName,
+        botJobId,
+        totalFind,
+        timestamp
     } = req.body;
 
     if (!brainrot) {
@@ -87,62 +91,88 @@ app.post('/post', (req, res) => {
 
     const jobId = decryptJobId(encryptedJobId);
 
+    // Resolve timestamp: use provided timestamp field, then time, then now
+    let resolvedTime;
+    if (timestamp) {
+        resolvedTime = isNaN(Number(timestamp))
+            ? new Date(timestamp).toISOString()
+            : new Date(Number(timestamp) * 1000).toISOString();
+    } else if (time) {
+        resolvedTime = new Date(time * 1000).toISOString();
+    } else {
+        resolvedTime = new Date().toISOString();
+    }
+
     const newEntry = {
         brainrot: brainrot,
         tier: tier || "unknown",
         income: income || "0",
         jobId: jobId,
         encryptedJobId: encryptedJobId,
-        placeId: placeId || game.PlaceId || "unknown",
-        time: time ? new Date(time * 1000).toISOString() : new Date().toISOString(),
+        placeId: placeId || "unknown",
+        time: resolvedTime,
         allFound: allFound || [],
+        botName: botName || "unknown",
+        botJobId: botJobId || "unknown",
+        totalFind: totalFind !== undefined ? Number(totalFind) : 0,
         receivedAt: new Date().toISOString()
     };
 
     recentPosts.unshift(newEntry);
-    if (recentPosts.length > 9000000000000000) recentPosts.pop();
 
-    console.log(`✅ Successfully received & decrypted: ${brainrot} | JobId: ${jobId}`);
+    console.log(`✅ Received: ${brainrot} | JobId: ${jobId} | Bot: ${newEntry.botName} | BotJobId: ${newEntry.botJobId} | TotalFind: ${newEntry.totalFind}`);
 
     sendWebhook(newEntry);
 
-    // Return plain JSON
     res.status(200).json({
         success: true,
         message: "Data received and decrypted",
         decryptedJobId: jobId,
         brainrot: brainrot,
+        botName: newEntry.botName,
+        botJobId: newEntry.botJobId,
+        totalFind: newEntry.totalFind,
         totalPosts: recentPosts.length
     });
 });
 
-// ====================== VIEW POSTS (plain JSON) ======================
-app.get('/posts', (req, res) => {
+// ====================== VIEW LOGS /data ======================
+app.get('/data', (req, res) => {
     res.status(200).json({
         total: recentPosts.length,
         posts: recentPosts
     });
 });
 
+// ====================== LEGACY ROUTES (kept for compatibility) ======================
+app.post('/post', (req, res) => {
+    req.url = '/api';
+    app._router.handle(req, res, () => {});
+});
+
+app.get('/posts', (req, res) => {
+    res.redirect('/data');
+});
+
 // Health
 app.get('/health', (req, res) => {
-    res.json({ 
-        status: "ok", 
-        message: "API is running", 
-        totalPosts: recentPosts.length 
+    res.json({
+        status: "ok",
+        message: "API is running",
+        totalPosts: recentPosts.length
     });
 });
 
 // Root
 app.get('/', (req, res) => {
-    res.json({ 
-        message: "Syntax API is running. Use POST /post and GET /posts" 
+    res.json({
+        message: "Syntax API is running. Use POST /api and GET /data"
     });
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`🚀 Syntax API running on port ${PORT}`);
-    console.log(`📡 Send data to: /post`);
-    console.log(`📋 View logs at: /posts`);
+    console.log(`📡 Send data to: /api`);
+    console.log(`📋 View logs at: /data`);
 });
