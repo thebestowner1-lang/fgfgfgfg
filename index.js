@@ -32,27 +32,26 @@ function decryptJobId(hex) {
     }
 }
 
-// ====================== STORAGE ======================
-let recentPosts = [];
+// ====================== SEPARATE STORAGE ======================
+let scannerPosts = [];  // /post  → /posts
+let botPosts     = [];  // /api   → /data
 
 // ====================== DISCORD WEBHOOK ======================
-function sendWebhook(entry) {
+function sendWebhook(entry, isBot) {
     if (!WEBHOOK_URL) return;
 
-    const payload = JSON.stringify({
-        username: "Syntax Logger",
-        content: `🌹 **New Post**\n**Brainrot:** ${entry.brainrot}\n**Tier:** ${entry.tier}\n**Income:** ${entry.income}\n**Job ID:** \`${entry.jobId}\`\n**Bot Name:** ${entry.botName}\n**Bot Job ID:** \`${entry.botJobId}\`\n**Total Finds:** ${entry.totalFind}`,
-    });
+    const content = isBot
+        ? `🤖 **Bot Find**\n**User:** ${entry.botName}\n**Brainrot:** ${entry.brainrot}\n**Tier:** ${entry.tier}\n**Income:** ${entry.income}\n**Bot Job ID:** \`${entry.botJobId}\`\n**Total Finds:** ${entry.totalFind}`
+        : `🌹 **Scanner Find**\n**Brainrot:** ${entry.brainrot}\n**Tier:** ${entry.tier}\n**Income:** ${entry.income}\n**Job ID:** \`${entry.jobId}\``;
+
+    const payload = JSON.stringify({ username: "Syntax Logger", content });
 
     const url = new URL(WEBHOOK_URL);
     const options = {
         hostname: url.hostname,
         path: url.pathname + url.search,
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'Content-Length': Buffer.byteLength(payload)
-        }
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) }
     };
 
     const req = https.request(options, () => {});
@@ -61,38 +60,15 @@ function sendWebhook(entry) {
     req.end();
 }
 
-// ====================== SHARED HANDLER ======================
-// Both /api and /post point to this same function so they behave identically
-function handlePost(req, res) {
-    console.log("📥 Received raw body:", JSON.stringify(req.body, null, 2));
+// ====================== SHARED ENTRY BUILDER ======================
+function buildEntry(body, isBot) {
+    const { brainrot, tier, income, encryptedJobId, placeId, time, allFound, botName, botJobId, totalFind, timestamp } = body;
 
-    const {
-        brainrot,
-        tier,
-        income,
-        encryptedJobId,
-        placeId,
-        time,
-        allFound,
-        botName,
-        botJobId,
-        totalFind,
-        timestamp
-    } = req.body;
-
-    if (!brainrot) {
-        console.log("❌ Missing brainrot");
-        return res.status(400).json({ error: "Missing brainrot" });
-    }
-
-    if (!encryptedJobId) {
-        console.log("❌ Missing encryptedJobId");
-        return res.status(400).json({ error: "Missing encryptedJobId" });
-    }
+    if (!brainrot)       return { error: "Missing brainrot" };
+    if (!encryptedJobId) return { error: "Missing encryptedJobId" };
 
     const jobId = decryptJobId(encryptedJobId);
 
-    // Resolve timestamp: prefer timestamp field, then time, then now
     let resolvedTime;
     if (timestamp) {
         resolvedTime = isNaN(Number(timestamp))
@@ -104,7 +80,7 @@ function handlePost(req, res) {
         resolvedTime = new Date().toISOString();
     }
 
-    const newEntry = {
+    const entry = {
         brainrot:       brainrot,
         tier:           tier || "unknown",
         income:         income || "0",
@@ -113,65 +89,84 @@ function handlePost(req, res) {
         placeId:        placeId || "unknown",
         time:           resolvedTime,
         allFound:       allFound || [],
-        botName:        botName || "unknown",
-        botJobId:       botJobId || "unknown",
-        totalFind:      totalFind !== undefined ? Number(totalFind) : 0,
-        receivedAt:     new Date().toISOString()
+        receivedAt:     new Date().toISOString(),
     };
 
-    recentPosts.unshift(newEntry);
+    if (isBot) {
+        entry.botName   = botName  || "unknown";
+        entry.botJobId  = botJobId || "unknown";
+        entry.totalFind = totalFind !== undefined ? Number(totalFind) : 0;
+    }
 
-    console.log(`✅ Received: ${brainrot} | JobId: ${jobId} | Bot: ${newEntry.botName} | BotJobId: ${newEntry.botJobId} | TotalFind: ${newEntry.totalFind}`);
+    return entry;
+}
 
-    sendWebhook(newEntry);
+// ====================== SCANNER: POST /post → GET /posts ======================
+app.post('/post', (req, res) => {
+    console.log("📥 [SCANNER] raw body:", JSON.stringify(req.body, null, 2));
+
+    const entry = buildEntry(req.body, false);
+    if (entry.error) return res.status(400).json({ error: entry.error });
+
+    scannerPosts.unshift(entry);
+    console.log(`✅ [SCANNER] ${entry.brainrot} | JobId: ${entry.jobId}`);
+    sendWebhook(entry, false);
 
     return res.status(200).json({
         success:        true,
-        message:        "Data received and decrypted",
-        decryptedJobId: jobId,
-        brainrot:       brainrot,
-        botName:        newEntry.botName,
-        botJobId:       newEntry.botJobId,
-        totalFind:      newEntry.totalFind,
-        totalPosts:     recentPosts.length
+        message:        "Scanner data received",
+        decryptedJobId: entry.jobId,
+        brainrot:       entry.brainrot,
+        totalPosts:     scannerPosts.length
     });
-}
+});
 
-// ====================== SHARED READER ======================
-function handleGet(req, res) {
+app.get('/posts', (req, res) => {
+    return res.status(200).json({ total: scannerPosts.length, posts: scannerPosts });
+});
+
+// ====================== BOT: POST /api → GET /data ======================
+app.post('/api', (req, res) => {
+    console.log("📥 [BOT] raw body:", JSON.stringify(req.body, null, 2));
+
+    const entry = buildEntry(req.body, true);
+    if (entry.error) return res.status(400).json({ error: entry.error });
+
+    botPosts.unshift(entry);
+    console.log(`✅ [BOT] ${entry.brainrot} | User: ${entry.botName} | BotJobId: ${entry.botJobId} | TotalFind: ${entry.totalFind}`);
+    sendWebhook(entry, true);
+
     return res.status(200).json({
-        total: recentPosts.length,
-        posts: recentPosts
+        success:        true,
+        message:        "Bot data received",
+        decryptedJobId: entry.jobId,
+        brainrot:       entry.brainrot,
+        botName:        entry.botName,
+        botJobId:       entry.botJobId,
+        totalFind:      entry.totalFind,
+        totalPosts:     botPosts.length
     });
-}
+});
 
-// ====================== ROUTES ======================
+app.get('/data', (req, res) => {
+    return res.status(200).json({ total: botPosts.length, posts: botPosts });
+});
 
-// New endpoints
-app.post('/api',  handlePost);
-app.get('/data',  handleGet);
-
-// Legacy endpoints — same logic, nothing broken
-app.post('/post',  handlePost);
-app.get('/posts',  handleGet);
-
-// Health
+// ====================== MISC ======================
 app.get('/health', (req, res) => res.json({
-    status:     "ok",
-    message:    "API is running",
-    totalPosts: recentPosts.length
+    status:        "ok",
+    scannerPosts:  scannerPosts.length,
+    botPosts:      botPosts.length
 }));
 
-// Root
 app.get('/', (req, res) => res.json({
-    message: "Syntax API is running.",
-    post:    "POST /api  (legacy: POST /post)",
-    logs:    "GET /data  (legacy: GET /posts)"
+    scanner: { post: "POST /post", logs: "GET /posts" },
+    bot:     { post: "POST /api",  logs: "GET /data"  }
 }));
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`🚀 Syntax API running on port ${PORT}`);
-    console.log(`📡 Post data to : POST /api   (legacy: /post)`);
-    console.log(`📋 View logs at : GET  /data  (legacy: /posts)`);
+    console.log(`🔍 Scanner → POST /post  | GET /posts`);
+    console.log(`🤖 Bot     → POST /api   | GET /data`);
 });
